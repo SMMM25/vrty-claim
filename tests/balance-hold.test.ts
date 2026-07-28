@@ -110,6 +110,13 @@ describe("evaluateHold", () => {
     expect(result.eligible).toBe(true);
   });
 
+  it("refuses when coverage is claimed but no balance was ever observed", () => {
+    const result = evaluate({ coversWindow: true, points: [] });
+
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toMatch(/could not verify/i);
+  });
+
   it("uses the latest dip when several occurred", () => {
     const result = evaluate({
       points: [

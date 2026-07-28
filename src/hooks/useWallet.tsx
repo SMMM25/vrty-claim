@@ -282,7 +282,17 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
       if (wallet.kind === "crossmark") {
         const { default: sdk } = await import("@crossmarkio/sdk");
-        await sdk.async.signAndSubmitAndWait(txData.txJson);
+        const result = await sdk.async.signAndSubmitAndWait(txData.txJson);
+        const status = (
+          result as {
+            response?: {
+              data?: { meta?: { isRejected?: boolean; isSuccess?: boolean } };
+            };
+          }
+        ).response?.data?.meta;
+        if (status?.isRejected || status?.isSuccess === false) {
+          throw new Error("Crossmark declined the trust line");
+        }
         return { ok: true };
       }
 
