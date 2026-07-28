@@ -19,7 +19,7 @@ export async function connectXrpl(
       try {
         await client.disconnect();
       } catch {
-        /* ignore */
+        /* endpoint already unusable */
       }
     }
   }
@@ -35,4 +35,14 @@ export function dropsToXrp(drops: string | number): number {
 
 export function xrpToDrops(xrp: number): string {
   return String(Math.round(xrp * 1_000_000));
+}
+
+/** rippled reports unfunded or non-existent accounts as `actNotFound`. */
+export function isAccountNotFound(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const data = (err as { data?: { error?: unknown } }).data;
+  if (data && typeof data === "object" && data.error === "actNotFound") {
+    return true;
+  }
+  return /actNotFound/i.test(String((err as Error).message ?? ""));
 }

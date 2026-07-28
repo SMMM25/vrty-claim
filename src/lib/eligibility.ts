@@ -1,3 +1,4 @@
+import type { Client } from "xrpl";
 import {
   BALANCE_HOLD_DAYS,
   CLAIM_AMOUNT,
@@ -6,9 +7,14 @@ import {
   MIN_XRP,
 } from "./config";
 import { prisma } from "./db";
-import { verifyContinuousXrpHold } from "./balance-hold";
-import { checkSybil } from "./sybil";
-import { hasVrtyTrustLine, getVrtyBalance } from "./distribution";
+import {
+  AccountNotFoundError,
+  evaluateHold,
+  fetchHoldHistory,
+  type BalanceHoldResult,
+} from "./balance-hold";
+import { checkSybil, type SybilResult } from "./sybil";
+import { getVrtyLine } from "./distribution";
 import { connectXrpl } from "./xrpl";
 
 export type EligibilityResponse = {
@@ -23,10 +29,11 @@ export type EligibilityResponse = {
   holdDays: number;
   hasTrustLine: boolean;
   vrtyBalance: string;
-  balanceHold: Awaited<ReturnType<typeof verifyContinuousXrpHold>>;
-  sybil: { blocked: boolean; fundedBy: string | null; reason?: string };
+  balanceHold: BalanceHoldResult;
+  sybil: SybilResult;
   alreadyClaimed: boolean;
   ipBlocked: boolean;
+  accountFound: boolean;
 };
 
 export async function ensureCounter(): Promise<{ successCount: number }> {
@@ -34,13 +41,15 @@ export async function ensureCounter(): Promise<{ successCount: number }> {
     where: { id: 1 },
     create: { id: 1, successCount: 0 },
     update: {},
+    select: { successCount: true },
   });
-  return { successCount: row.successCount };
+  return row;
 }
 
 export async function evaluateEligibility(
   walletAddress: string,
-  ipAddress: string
+  ipAddress: string,
+  options?: { client?: Client }
 ): Promise<EligibilityResponse> {
   if (!isAddressLike(walletAddress)) {
     throw new Error("Invalid XRPL address");
@@ -51,61 +60,94 @@ export async function evaluateEligibility(
 
   const existing = await prisma.claim.findUnique({
     where: { walletAddress },
+    select: { status: true },
   });
   const alreadyClaimed = existing?.status === "SUCCESS";
 
   const ipClaim = await prisma.claim.findFirst({
-    where: { ipAddress, status: "SUCCESS" },
+    where: { ipAddress, status: "SUCCESS", walletAddress: { not: walletAddress } },
+    select: { id: true },
   });
-  const ipBlocked = Boolean(ipClaim && ipClaim.walletAddress !== walletAddress);
+  const ipBlocked = Boolean(ipClaim);
 
-  const client = await connectXrpl();
+  const base = {
+    walletAddress,
+    claimAmount: CLAIM_AMOUNT,
+    claimCap: CLAIM_CAP,
+    claimsRemaining,
+    successCount,
+    minXrp: MIN_XRP,
+    holdDays: BALANCE_HOLD_DAYS,
+  };
+
+  const client = options?.client ?? (await connectXrpl());
   try {
-    const [balanceHold, sybil, trust, vrtyBalance] = await Promise.all([
-      verifyContinuousXrpHold(client, walletAddress),
+    const history = await fetchHoldHistory(client, walletAddress);
+    const [sybil, vrtyLine] = await Promise.all([
       checkSybil(client, walletAddress),
-      hasVrtyTrustLine(client, walletAddress),
-      getVrtyBalance(client, walletAddress),
+      getVrtyLine(client, walletAddress),
     ]);
+    const balanceHold = evaluateHold({ history });
 
     const reasons: string[] = [];
     if (alreadyClaimed) reasons.push("This wallet has already claimed.");
-    if (ipBlocked) reasons.push("A successful claim was already made from this IP.");
-    if (claimsRemaining <= 0) reasons.push("Global claim cap reached (10,000).");
-    if (!balanceHold.eligible) reasons.push(balanceHold.reason);
-    if (sybil.blocked) reasons.push(sybil.reason);
-    if (!trust) reasons.push("VRTY trust line required before claiming.");
-
-    const eligible =
-      !alreadyClaimed &&
-      !ipBlocked &&
-      claimsRemaining > 0 &&
-      balanceHold.eligible &&
-      !sybil.blocked &&
-      trust;
+    if (ipBlocked) {
+      reasons.push("A successful claim was already made from this network.");
+    }
+    if (claimsRemaining <= 0) {
+      reasons.push(`All ${CLAIM_CAP.toLocaleString()} claims have been taken.`);
+    }
+    if (!balanceHold.eligible && balanceHold.reason) {
+      reasons.push(balanceHold.reason);
+    }
+    if (sybil.blocked && sybil.reason) reasons.push(sybil.reason);
+    if (!vrtyLine.hasLine) {
+      reasons.push("A VRTY trust line is required before claiming.");
+    }
 
     return {
-      walletAddress,
-      eligible,
+      ...base,
+      eligible:
+        !alreadyClaimed &&
+        !ipBlocked &&
+        claimsRemaining > 0 &&
+        balanceHold.eligible &&
+        !sybil.blocked &&
+        vrtyLine.hasLine,
       reasons,
-      claimAmount: CLAIM_AMOUNT,
-      claimCap: CLAIM_CAP,
-      claimsRemaining,
-      successCount,
-      minXrp: MIN_XRP,
-      holdDays: BALANCE_HOLD_DAYS,
-      hasTrustLine: trust,
-      vrtyBalance,
+      hasTrustLine: vrtyLine.hasLine,
+      vrtyBalance: vrtyLine.balance,
       balanceHold,
-      sybil: {
-        blocked: sybil.blocked,
-        fundedBy: sybil.fundedBy,
-        reason: sybil.blocked ? sybil.reason : undefined,
-      },
+      sybil,
       alreadyClaimed,
       ipBlocked,
+      accountFound: true,
     };
+  } catch (err) {
+    if (err instanceof AccountNotFoundError) {
+      return {
+        ...base,
+        eligible: false,
+        reasons: [
+          "This wallet does not exist on the XRP Ledger yet. Fund it with at least 10 XRP and try again.",
+        ],
+        hasTrustLine: false,
+        vrtyBalance: "0",
+        balanceHold: {
+          eligible: false,
+          currentXrp: 0,
+          continuousSince: null,
+          holdDays: BALANCE_HOLD_DAYS,
+          reason: "Account not funded on the XRP Ledger.",
+        },
+        sybil: { blocked: false, fundedBy: null },
+        alreadyClaimed,
+        ipBlocked,
+        accountFound: false,
+      };
+    }
+    throw err;
   } finally {
-    await client.disconnect();
+    if (!options?.client) await client.disconnect();
   }
 }

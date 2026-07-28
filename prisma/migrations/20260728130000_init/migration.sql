@@ -10,6 +10,7 @@ CREATE TABLE "Claim" (
     "amount" TEXT NOT NULL DEFAULT '58.9',
     "status" "ClaimStatus" NOT NULL DEFAULT 'PENDING',
     "txHash" TEXT,
+    "lastLedgerSeq" INTEGER,
     "failReason" TEXT,
     "idempotencyKey" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,

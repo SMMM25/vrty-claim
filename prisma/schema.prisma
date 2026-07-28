@@ -16,6 +16,7 @@ model Claim {
   amount          String      @default("58.9")
   status          ClaimStatus @default(PENDING)
   txHash          String?     @unique
+  lastLedgerSeq   Int?
   failReason      String?
   idempotencyKey  String      @unique
   createdAt       DateTime    @default(now())

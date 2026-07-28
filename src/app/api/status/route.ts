@@ -1,38 +1,47 @@
 import { NextResponse } from "next/server";
-import { CLAIM_AMOUNT, CLAIM_CAP, MIN_XRP, BALANCE_HOLD_DAYS } from "@/lib/config";
+import {
+  BALANCE_HOLD_DAYS,
+  CLAIM_AMOUNT,
+  CLAIM_CAP,
+  MIN_XRP,
+} from "@/lib/config";
 import { ensureCounter } from "@/lib/eligibility";
 
 export const dynamic = "force-dynamic";
+
+const RULES = {
+  claimAmount: CLAIM_AMOUNT,
+  claimCap: CLAIM_CAP,
+  minXrp: MIN_XRP,
+  holdDays: BALANCE_HOLD_DAYS,
+};
 
 export async function GET() {
   try {
     const { successCount } = await ensureCounter();
     return NextResponse.json({
       ok: true,
-      claimAmount: CLAIM_AMOUNT,
-      claimCap: CLAIM_CAP,
+      ...RULES,
       successCount,
       claimsRemaining: Math.max(0, CLAIM_CAP - successCount),
-      minXrp: MIN_XRP,
-      holdDays: BALANCE_HOLD_DAYS,
-      distributionConfigured: Boolean(process.env.DISTRIBUTION_SEED?.trim()),
-      xamanConfigured: Boolean(
-        process.env.NEXT_PUBLIC_XUMM_API_KEY?.trim() &&
-          process.env.XUMM_API_SECRET?.trim()
-      ),
-      turnstileConfigured: Boolean(process.env.TURNSTILE_SECRET_KEY?.trim()),
+      configured: {
+        distribution: Boolean(process.env.DISTRIBUTION_SEED?.trim()),
+        xaman: Boolean(
+          process.env.NEXT_PUBLIC_XUMM_API_KEY?.trim() &&
+            process.env.XUMM_API_SECRET?.trim()
+        ),
+        captcha: Boolean(process.env.TURNSTILE_SECRET_KEY?.trim()),
+      },
     });
   } catch (err) {
+    console.error("[status] counter unavailable", err);
     return NextResponse.json(
       {
         ok: false,
-        error: err instanceof Error ? err.message : "Status check failed",
-        claimAmount: CLAIM_AMOUNT,
-        claimCap: CLAIM_CAP,
+        error: "Claim status is temporarily unavailable.",
+        ...RULES,
         successCount: 0,
         claimsRemaining: CLAIM_CAP,
-        minXrp: MIN_XRP,
-        holdDays: BALANCE_HOLD_DAYS,
       },
       { status: 503 }
     );
