@@ -14,13 +14,13 @@ See `.env.example`. Minimum for a working deploy:
 
 ## Build
 
+Nixpacks runs `npm ci` automatically — do **not** repeat it in `buildCommand`
+(that causes `EBUSY` on `node_modules/.cache` during Railway builds).
+
 ```
-npm ci
-npx prisma generate
-npx prisma migrate deploy
 npm run build
 ```
 
-Start: `npm start`
+Start: `npx prisma migrate deploy && npm start`
 
 Custom domain: `claim.verityprotocol.io`
