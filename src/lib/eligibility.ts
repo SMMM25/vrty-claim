@@ -36,14 +36,26 @@ export type EligibilityResponse = {
   accountFound: boolean;
 };
 
+/** Read the counter, creating it on first use. Avoids writing on every read. */
 export async function ensureCounter(): Promise<{ successCount: number }> {
-  const row = await prisma.claimCounter.upsert({
+  const existing = await prisma.claimCounter.findUnique({
     where: { id: 1 },
-    create: { id: 1, successCount: 0 },
-    update: {},
     select: { successCount: true },
   });
-  return row;
+  if (existing) return existing;
+
+  try {
+    return await prisma.claimCounter.create({
+      data: { id: 1, successCount: 0 },
+      select: { successCount: true },
+    });
+  } catch {
+    // Another request created it first.
+    return prisma.claimCounter.findUniqueOrThrow({
+      where: { id: 1 },
+      select: { successCount: true },
+    });
+  }
 }
 
 export async function evaluateEligibility(

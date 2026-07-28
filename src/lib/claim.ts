@@ -5,14 +5,17 @@ import { CLAIM_AMOUNT, CLAIM_CAP, isAddressLike } from "./config";
 import { prisma } from "./db";
 import { ensureCounter, evaluateEligibility } from "./eligibility";
 import {
+  LedgerRejectedError,
   lookupTransaction,
-  signClaimPayment,
-  submitSignedPayment,
+  sendClaimPayment,
 } from "./distribution";
 import { connectXrpl } from "./xrpl";
 
 /** A claim that never reached submission is released after this long. */
 const STALE_PENDING_MS = 15 * 60_000;
+
+/** Last resort for a submitted claim with no recorded ledger expiry. */
+const STUCK_SUBMITTED_MS = 60 * 60_000;
 
 /** Statuses that occupy a slot against the global cap. */
 const SLOT_HOLDING: ClaimStatus[] = [
@@ -167,9 +170,15 @@ async function reconcileSubmitted(
   }
 
   // Not validated: only safe to retry once the transaction can no longer pass.
-  const currentLedger = await client.getLedgerIndex();
-  if (claim.lastLedgerSeq !== null && currentLedger > claim.lastLedgerSeq) {
-    await markFailed(claim.id, "Transaction expired without validation");
+  if (claim.lastLedgerSeq !== null) {
+    const currentLedger = await client.getLedgerIndex();
+    if (currentLedger > claim.lastLedgerSeq) {
+      await markFailed(claim.id, "Transaction expired without validation");
+      return null;
+    }
+  } else if (Date.now() - claim.updatedAt.getTime() > STUCK_SUBMITTED_MS) {
+    // No expiry recorded: release the slot rather than wedging the wallet.
+    await markFailed(claim.id, "Submission could not be confirmed");
     return null;
   }
 
@@ -289,49 +298,59 @@ async function payReservedClaim(
   claimId: string,
   walletAddress: string
 ): Promise<ClaimResult> {
-  let signed;
+  let submitted = false;
+
   try {
-    signed = await signClaimPayment(client, walletAddress);
+    const { hash } = await sendClaimPayment(
+      client,
+      walletAddress,
+      async ({ hash: signedHash, lastLedgerSequence }) => {
+        // Recorded before submission so an interrupted run can be reconciled.
+        await prisma.claim.update({
+          where: { id: claimId },
+          data: {
+            status: ClaimStatus.SUBMITTED,
+            txHash: signedHash,
+            lastLedgerSeq: lastLedgerSequence,
+          },
+        });
+        submitted = true;
+      }
+    );
+
+    return finalizeSuccess(claimId, hash, walletAddress, CLAIM_AMOUNT);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    await markFailed(claimId, reason);
+
     if (/DISTRIBUTION_SEED/.test(reason)) {
+      await markFailed(claimId, reason);
       throw new ClaimError(
         "CONFIG",
         "The distribution wallet is not configured."
       );
     }
-    throw new ClaimError("PAYMENT_FAILED", `Could not sign payment: ${reason}`);
-  }
 
-  // Record the hash before submitting so an interrupted run can be reconciled.
-  await prisma.claim.update({
-    where: { id: claimId },
-    data: {
-      status: ClaimStatus.SUBMITTED,
-      txHash: signed.hash,
-      lastLedgerSeq: signed.lastLedgerSequence,
-    },
-  });
+    // A validated rejection consumed the sequence, so retrying cannot double-pay.
+    if (err instanceof LedgerRejectedError) {
+      await markFailed(claimId, `Ledger rejected: ${err.engineResult}`);
+      throw new ClaimError("PAYMENT_FAILED", err.message);
+    }
 
-  let engineResult: string;
-  try {
-    ({ engineResult } = await submitSignedPayment(client, signed.txBlob));
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    await markFailed(claimId, reason);
-    throw new ClaimError("PAYMENT_FAILED", `Payment failed: ${reason}`);
-  }
+    if (!submitted) {
+      await markFailed(claimId, reason);
+      throw new ClaimError(
+        "PAYMENT_FAILED",
+        "The payment could not be started. Please try again."
+      );
+    }
 
-  if (engineResult !== "tesSUCCESS") {
-    await markFailed(claimId, `Ledger rejected: ${engineResult}`);
+    // The transaction may still settle. Leave it SUBMITTED so the next attempt
+    // reconciles it against the ledger rather than paying twice.
     throw new ClaimError(
-      "PAYMENT_FAILED",
-      `The ledger rejected the payment (${engineResult}).`
+      "CONFLICT",
+      "Your claim was submitted but has not settled yet. Check back in a minute."
     );
   }
-
-  return finalizeSuccess(claimId, signed.hash, walletAddress, CLAIM_AMOUNT);
 }
 
 /** Mark success and count it exactly once, even if called twice. */

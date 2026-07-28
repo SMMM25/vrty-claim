@@ -68,9 +68,10 @@ Decisions made while building Phase 1 that a reviewer should know:
 - **Provable history only.** The hold check requires history reaching past the window start, or the account-creating transaction. If neither is available the claim is refused rather than assumed — no silent passes.
 - **Hold clock.** Balance between two observations equals the older observation, so history reduces to segments. The clock restarts at the end of the most recent segment below the minimum.
 - **Cap accounting.** Reservations lock the counter row (`SELECT … FOR UPDATE`) and count `PENDING`, `SUBMITTED`, and `SUCCESS` claims, so concurrent requests cannot oversell the cap. Abandoned `PENDING` rows release their slot after 15 minutes.
-- **No double payments.** The payment is signed, its hash and `LastLedgerSequence` are stored, and only then is it submitted. An interrupted run is reconciled from the ledger on the next attempt instead of paying again.
+- **No double payments.** The payment is signed, its hash and `LastLedgerSequence` are stored, and only then is it submitted. An interrupted run is reconciled from the ledger on the next attempt instead of paying again. A claim is only released for retry once the ledger proves the payment failed or expired.
+- **One payment at a time.** `autofill` reads the distribution wallet's next sequence number from the ledger, so concurrent claims would sign duplicate sequences and stall until their ledger gap expired. Signing and submitting are serialised, which also means claims are processed in order.
 - **Counter integrity.** The success transition is guarded, so the counter increments exactly once per claim even if finalisation runs twice.
-- **Rate limiting.** In-process sliding window, sized for a single instance. Move to Redis before running multiple replicas.
+- **Single instance.** Payment serialisation and rate limiting are both in-process, so the service runs with one replica (`numReplicas: 1`). Running replicas requires a shared lock for the distribution wallet and Redis-backed rate limiting.
 - **Captcha fails closed.** In production a missing `TURNSTILE_SECRET_KEY` rejects claims rather than skipping the check.
 
 ## Deployment

@@ -72,7 +72,7 @@ export function evaluateHold(args: {
     };
   }
 
-  if (!coversWindow) {
+  if (!coversWindow || points.length === 0) {
     return {
       eligible: false,
       currentXrp,
@@ -89,8 +89,7 @@ export function evaluateHold(args: {
     if (lastDipEnd === null || segmentEnd > lastDipEnd) lastDipEnd = segmentEnd;
   }
 
-  const continuousSince =
-    lastDipEnd ?? accountCreatedMs ?? points[0]?.ms ?? windowStart;
+  const continuousSince = lastDipEnd ?? accountCreatedMs ?? points[0].ms;
   const heldMs = now - continuousSince;
 
   if (heldMs >= holdMs) {
@@ -170,9 +169,11 @@ export async function fetchHoldHistory(
         coversWindow = true;
         break;
       }
-      // The newest observation older than the window start gives the balance
-      // at the window boundary, so keep it and stop.
-      if (tx.ms < windowStart) {
+      // The oldest observed balance inside or before the window fixes the
+      // balance at the window boundary. Transactions that never touched this
+      // account root (rippling through a trust line, for example) prove
+      // nothing, so keep walking until an actual balance is observed.
+      if (tx.ms < windowStart && balanceAfter !== null) {
         coversWindow = true;
         break;
       }

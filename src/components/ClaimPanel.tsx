@@ -95,6 +95,8 @@ export function ClaimPanel() {
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "Claim failed");
       setSuccess({ txHash: data.txHash, amount: data.amount });
+      // Pick up the delivered balance for the confirmation panel.
+      void refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Claim failed");
       await refresh();
@@ -115,9 +117,15 @@ export function ClaimPanel() {
     return (
       <div className="animate-fade-in rounded-2xl border border-emerald-500/30 bg-emerald-950/30 p-6">
         <h3 className="font-[family-name:var(--font-display)] text-2xl font-semibold text-emerald-300">
-          {success.amount} VRTY is on its way
+          {success.amount} VRTY delivered
         </h3>
-        <p className="mt-2 break-all text-sm text-slate-300">
+        <p className="mt-2 text-sm text-slate-300">
+          Wallet balance:{" "}
+          <span className="font-semibold text-white">
+            {eligibility ? `${eligibility.vrtyBalance} VRTY` : "updating…"}
+          </span>
+        </p>
+        <p className="mt-2 break-all text-sm text-slate-400">
           Transaction{" "}
           <a
             className="text-violet-300 underline"

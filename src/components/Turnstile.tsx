@@ -16,7 +16,12 @@ function loadTurnstile(): Promise<void> {
     script.src = SCRIPT_SRC;
     script.async = true;
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load Turnstile"));
+    script.onerror = () => {
+      // Allow a later mount to retry the load.
+      scriptPromise = null;
+      script.remove();
+      reject(new Error("Failed to load Turnstile"));
+    };
     document.head.appendChild(script);
   });
 
