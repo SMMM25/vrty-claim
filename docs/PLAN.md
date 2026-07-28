@@ -60,6 +60,19 @@ New code (~50–60% of effort):
 - Distribution signing pipeline
 - xApp manifest and claim-specific UI
 
+## Implementation notes
+
+Decisions made while building Phase 1 that a reviewer should know:
+
+- **API version safety.** `account_tx` returns `tx` on rippled API v1 and `tx_json` on v2 (the xrpl.js default). All ledger history is read through `src/lib/xrpl-tx.ts`, which normalises both shapes.
+- **Provable history only.** The hold check requires history reaching past the window start, or the account-creating transaction. If neither is available the claim is refused rather than assumed — no silent passes.
+- **Hold clock.** Balance between two observations equals the older observation, so history reduces to segments. The clock restarts at the end of the most recent segment below the minimum.
+- **Cap accounting.** Reservations lock the counter row (`SELECT … FOR UPDATE`) and count `PENDING`, `SUBMITTED`, and `SUCCESS` claims, so concurrent requests cannot oversell the cap. Abandoned `PENDING` rows release their slot after 15 minutes.
+- **No double payments.** The payment is signed, its hash and `LastLedgerSequence` are stored, and only then is it submitted. An interrupted run is reconciled from the ledger on the next attempt instead of paying again.
+- **Counter integrity.** The success transition is guarded, so the counter increments exactly once per claim even if finalisation runs twice.
+- **Rate limiting.** In-process sliding window, sized for a single instance. Move to Redis before running multiple replicas.
+- **Captcha fails closed.** In production a missing `TURNSTILE_SECRET_KEY` rejects claims rather than skipping the check.
+
 ## Deployment
 
 - Target URL: `claim.verityprotocol.io`

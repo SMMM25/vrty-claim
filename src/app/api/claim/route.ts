@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { executeClaim } from "@/lib/claim";
+import { executeClaim, type ClaimErrorCode } from "@/lib/claim";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
 import { verifyTurnstile } from "@/lib/turnstile";
 
@@ -12,13 +12,26 @@ const bodySchema = z.object({
   idempotencyKey: z.string().min(8).max(128).optional(),
 });
 
+const STATUS_BY_CODE: Record<ClaimErrorCode, number> = {
+  INELIGIBLE: 400,
+  CAP_REACHED: 409,
+  ALREADY_CLAIMED: 409,
+  IP_BLOCKED: 409,
+  CONFLICT: 409,
+  CONFIG: 503,
+  PAYMENT_FAILED: 502,
+};
+
 export async function POST(req: Request) {
   const ip = clientIp(req);
-  const rl = rateLimit(`claim:${ip}`, 10, 60_000);
-  if (!rl.ok) {
+  const limit = rateLimit(`claim:${ip}`, 10, 60_000);
+  if (!limit.ok) {
     return NextResponse.json(
-      { error: "Rate limit exceeded", retryAfterMs: rl.retryAfterMs },
-      { status: 429 }
+      { ok: false, error: "Too many attempts. Please wait a moment." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(Math.ceil(limit.retryAfterMs / 1000)) },
+      }
     );
   }
 
@@ -26,18 +39,24 @@ export async function POST(req: Request) {
   try {
     json = await req.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: "Invalid request body." },
+      { status: 400 }
+    );
   }
 
   const parsed = bodySchema.safeParse(json);
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    return NextResponse.json(
+      { ok: false, error: "Invalid request body." },
+      { status: 400 }
+    );
   }
 
   const captcha = await verifyTurnstile(parsed.data.turnstileToken, ip);
   if (!captcha.ok) {
     return NextResponse.json(
-      { error: captcha.reason ?? "Captcha failed" },
+      { ok: false, error: captcha.reason ?? "Captcha check failed." },
       { status: 403 }
     );
   }
@@ -50,23 +69,18 @@ export async function POST(req: Request) {
     });
 
     if (!result.ok) {
-      const status =
-        result.code === "CAP_REACHED"
-          ? 409
-          : result.code === "ALREADY_CLAIMED" || result.code === "IP_BLOCKED"
-            ? 409
-            : result.code === "CONFIG"
-              ? 503
-              : 400;
-      return NextResponse.json(result, { status });
+      return NextResponse.json(result, {
+        status: STATUS_BY_CODE[result.code] ?? 400,
+      });
     }
 
     return NextResponse.json(result);
   } catch (err) {
+    console.error("[claim] unexpected failure", err);
     return NextResponse.json(
       {
         ok: false,
-        error: err instanceof Error ? err.message : "Claim failed",
+        error: "The claim could not be completed. Please try again.",
         code: "PAYMENT_FAILED",
       },
       { status: 500 }

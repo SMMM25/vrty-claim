@@ -1,9 +1,34 @@
 import { randomUUID } from "crypto";
+import { ClaimStatus, type Claim } from "@prisma/client";
+import type { Client } from "xrpl";
 import { CLAIM_AMOUNT, CLAIM_CAP, isAddressLike } from "./config";
 import { prisma } from "./db";
-import { evaluateEligibility, ensureCounter } from "./eligibility";
-import { sendClaimPayment } from "./distribution";
+import { ensureCounter, evaluateEligibility } from "./eligibility";
+import {
+  lookupTransaction,
+  signClaimPayment,
+  submitSignedPayment,
+} from "./distribution";
 import { connectXrpl } from "./xrpl";
+
+/** A claim that never reached submission is released after this long. */
+const STALE_PENDING_MS = 15 * 60_000;
+
+/** Statuses that occupy a slot against the global cap. */
+const SLOT_HOLDING: ClaimStatus[] = [
+  ClaimStatus.PENDING,
+  ClaimStatus.SUBMITTED,
+  ClaimStatus.SUCCESS,
+];
+
+export type ClaimErrorCode =
+  | "INELIGIBLE"
+  | "CAP_REACHED"
+  | "ALREADY_CLAIMED"
+  | "IP_BLOCKED"
+  | "PAYMENT_FAILED"
+  | "CONFIG"
+  | "CONFLICT";
 
 export type ClaimResult =
   | {
@@ -17,20 +42,25 @@ export type ClaimResult =
   | {
       ok: false;
       error: string;
-      code:
-        | "INELIGIBLE"
-        | "CAP_REACHED"
-        | "ALREADY_CLAIMED"
-        | "IP_BLOCKED"
-        | "PAYMENT_FAILED"
-        | "CONFIG"
-        | "CONFLICT";
+      code: ClaimErrorCode;
       reasons?: string[];
     };
 
+class ClaimError extends Error {
+  constructor(
+    readonly code: ClaimErrorCode,
+    message: string
+  ) {
+    super(message);
+    this.name = "ClaimError";
+  }
+}
+
 /**
- * Atomically reserve a claim slot, send Payment, then mark SUCCESS.
- * On payment failure, mark FAILED and do not increment the counter.
+ * Reserve a slot, sign, submit, and record the distribution payment.
+ *
+ * The reservation locks the counter row so concurrent requests cannot oversell
+ * the cap, and in-flight claims hold their slot until they succeed or fail.
  */
 export async function executeClaim(params: {
   walletAddress: string;
@@ -39,198 +69,334 @@ export async function executeClaim(params: {
 }): Promise<ClaimResult> {
   const walletAddress = params.walletAddress.trim();
   if (!isAddressLike(walletAddress)) {
-    return { ok: false, error: "Invalid XRPL address", code: "INELIGIBLE" };
+    return { ok: false, error: "Invalid XRPL address.", code: "INELIGIBLE" };
   }
 
   const idempotencyKey = params.idempotencyKey?.trim() || randomUUID();
+  await ensureCounter();
 
-  // Idempotent replay
-  const prior = await prisma.claim.findUnique({ where: { idempotencyKey } });
-  if (prior?.status === "SUCCESS" && prior.txHash) {
-    const { successCount } = await ensureCounter();
-    return {
-      ok: true,
-      txHash: prior.txHash,
-      amount: prior.amount,
-      walletAddress: prior.walletAddress,
-      successCount,
-      claimsRemaining: Math.max(0, CLAIM_CAP - successCount),
-    };
+  const replay = await prisma.claim.findUnique({ where: { idempotencyKey } });
+  if (replay?.status === ClaimStatus.SUCCESS && replay.txHash) {
+    return successResult(replay.walletAddress, replay.txHash, replay.amount);
   }
 
-  const eligibility = await evaluateEligibility(
-    walletAddress,
-    params.ipAddress
-  );
-  if (!eligibility.eligible) {
-    const code = eligibility.alreadyClaimed
-      ? "ALREADY_CLAIMED"
-      : eligibility.ipBlocked
-        ? "IP_BLOCKED"
-        : eligibility.claimsRemaining <= 0
-          ? "CAP_REACHED"
-          : "INELIGIBLE";
+  let client: Client;
+  try {
+    client = await connectXrpl();
+  } catch (err) {
     return {
       ok: false,
-      error: eligibility.reasons[0] ?? "Not eligible",
-      code,
-      reasons: eligibility.reasons,
+      error: err instanceof Error ? err.message : "XRPL unavailable.",
+      code: "PAYMENT_FAILED",
     };
   }
 
-  // Reserve under serializable-ish transaction: check cap + unique wallet/ip
-  let claimId: string;
   try {
-    claimId = await prisma.$transaction(async (tx) => {
-      const counter = await tx.claimCounter.upsert({
-        where: { id: 1 },
-        create: { id: 1, successCount: 0 },
-        update: {},
-      });
+    const recovered = await reconcileSubmitted(client, walletAddress);
+    if (recovered) return recovered;
 
-      if (counter.successCount >= CLAIM_CAP) {
-        throw new Error("CAP_REACHED");
-      }
-
-      const existingWallet = await tx.claim.findUnique({
-        where: { walletAddress },
-      });
-      if (existingWallet?.status === "SUCCESS") {
-        throw new Error("ALREADY_CLAIMED");
-      }
-      if (
-        existingWallet &&
-        (existingWallet.status === "PENDING" ||
-          existingWallet.status === "SUBMITTED")
-      ) {
-        throw new Error("CONFLICT");
-      }
-
-      const existingIp = await tx.claim.findFirst({
-        where: { ipAddress: params.ipAddress, status: "SUCCESS" },
-      });
-      if (existingIp) {
-        throw new Error("IP_BLOCKED");
-      }
-
-      const claim = await tx.claim.upsert({
-        where: { walletAddress },
-        create: {
-          walletAddress,
-          ipAddress: params.ipAddress,
-          fundedBy: eligibility.sybil.fundedBy,
-          amount: CLAIM_AMOUNT,
-          status: "PENDING",
-          idempotencyKey,
-        },
-        update: {
-          ipAddress: params.ipAddress,
-          fundedBy: eligibility.sybil.fundedBy,
-          amount: CLAIM_AMOUNT,
-          status: "PENDING",
-          idempotencyKey,
-          failReason: null,
-          txHash: null,
-        },
-      });
-
-      return claim.id;
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg === "CAP_REACHED") {
-      return { ok: false, error: "Global claim cap reached.", code: "CAP_REACHED" };
-    }
-    if (msg === "ALREADY_CLAIMED") {
-      return {
-        ok: false,
-        error: "This wallet has already claimed.",
-        code: "ALREADY_CLAIMED",
-      };
-    }
-    if (msg === "IP_BLOCKED") {
-      return {
-        ok: false,
-        error: "A successful claim was already made from this IP.",
-        code: "IP_BLOCKED",
-      };
-    }
-    if (msg === "CONFLICT") {
-      return {
-        ok: false,
-        error: "A claim is already in progress for this wallet.",
-        code: "CONFLICT",
-      };
-    }
-    // Unique constraint on idempotencyKey / wallet
-    if (msg.includes("Unique constraint")) {
-      return {
-        ok: false,
-        error: "Claim conflict — retry with a new idempotency key.",
-        code: "CONFLICT",
-      };
-    }
-    throw err;
-  }
-
-  // Mark submitted then send payment
-  await prisma.claim.update({
-    where: { id: claimId },
-    data: { status: "SUBMITTED" },
-  });
-
-  const client = await connectXrpl();
-  try {
-    const { hash } = await sendClaimPayment(client, walletAddress);
-
-    const updated = await prisma.$transaction(async (tx) => {
-      const claim = await tx.claim.update({
-        where: { id: claimId },
-        data: {
-          status: "SUCCESS",
-          txHash: hash,
-          completedAt: new Date(),
-          failReason: null,
-        },
-      });
-
-      const counter = await tx.claimCounter.update({
-        where: { id: 1 },
-        data: { successCount: { increment: 1 } },
-      });
-
-      return { claim, counter };
-    });
-
-    return {
-      ok: true,
-      txHash: hash,
-      amount: CLAIM_AMOUNT,
+    const eligibility = await evaluateEligibility(
       walletAddress,
-      successCount: updated.counter.successCount,
-      claimsRemaining: Math.max(0, CLAIM_CAP - updated.counter.successCount),
-    };
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    await prisma.claim.update({
-      where: { id: claimId },
-      data: { status: "FAILED", failReason: reason },
-    });
-
-    if (reason.includes("DISTRIBUTION_SEED")) {
+      params.ipAddress,
+      { client }
+    );
+    if (!eligibility.eligible) {
       return {
         ok: false,
-        error: "Distribution wallet is not configured.",
-        code: "CONFIG",
+        error: eligibility.reasons[0] ?? "This wallet is not eligible.",
+        code: ineligibleCode(eligibility),
+        reasons: eligibility.reasons,
       };
     }
 
+    const claimId = await reserveSlot({
+      walletAddress,
+      ipAddress: params.ipAddress,
+      fundedBy: eligibility.sybil.fundedBy,
+      idempotencyKey,
+    });
+
+    return await payReservedClaim(client, claimId, walletAddress);
+  } catch (err) {
+    if (err instanceof ClaimError) {
+      return { ok: false, error: err.message, code: err.code };
+    }
     return {
       ok: false,
-      error: `Payment failed: ${reason}`,
+      error: err instanceof Error ? err.message : "Claim failed.",
       code: "PAYMENT_FAILED",
     };
   } finally {
     await client.disconnect();
   }
+}
+
+function ineligibleCode(eligibility: {
+  alreadyClaimed: boolean;
+  ipBlocked: boolean;
+  claimsRemaining: number;
+}): ClaimErrorCode {
+  if (eligibility.alreadyClaimed) return "ALREADY_CLAIMED";
+  if (eligibility.ipBlocked) return "IP_BLOCKED";
+  if (eligibility.claimsRemaining <= 0) return "CAP_REACHED";
+  return "INELIGIBLE";
+}
+
+/**
+ * Resolve a claim left in SUBMITTED by an interrupted run: settle it from the
+ * ledger rather than risking a second payment.
+ */
+async function reconcileSubmitted(
+  client: Client,
+  walletAddress: string
+): Promise<ClaimResult | null> {
+  const claim = await prisma.claim.findUnique({ where: { walletAddress } });
+  if (!claim || claim.status !== ClaimStatus.SUBMITTED || !claim.txHash) {
+    return null;
+  }
+
+  const onLedger = await lookupTransaction(client, claim.txHash);
+
+  if (onLedger?.validated && onLedger.engineResult === "tesSUCCESS") {
+    return finalizeSuccess(claim.id, claim.txHash, walletAddress, claim.amount);
+  }
+
+  if (onLedger?.validated) {
+    await markFailed(claim.id, `Ledger rejected: ${onLedger.engineResult}`);
+    return null;
+  }
+
+  // Not validated: only safe to retry once the transaction can no longer pass.
+  const currentLedger = await client.getLedgerIndex();
+  if (claim.lastLedgerSeq !== null && currentLedger > claim.lastLedgerSeq) {
+    await markFailed(claim.id, "Transaction expired without validation");
+    return null;
+  }
+
+  return {
+    ok: false,
+    error: "A claim for this wallet is still settling. Try again in a minute.",
+    code: "CONFLICT",
+  };
+}
+
+async function reserveSlot(input: {
+  walletAddress: string;
+  ipAddress: string;
+  fundedBy: string | null;
+  idempotencyKey: string;
+}): Promise<string> {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      // Serialize reservations against the single counter row.
+      await tx.$queryRaw`SELECT "id" FROM "ClaimCounter" WHERE "id" = 1 FOR UPDATE`;
+
+      await tx.claim.updateMany({
+        where: {
+          status: ClaimStatus.PENDING,
+          updatedAt: { lt: new Date(Date.now() - STALE_PENDING_MS) },
+        },
+        data: {
+          status: ClaimStatus.FAILED,
+          failReason: "Abandoned before submission",
+        },
+      });
+
+      const taken = await tx.claim.count({
+        where: { status: { in: SLOT_HOLDING } },
+      });
+      if (taken >= CLAIM_CAP) {
+        throw new ClaimError(
+          "CAP_REACHED",
+          `All ${CLAIM_CAP.toLocaleString()} claims have been taken.`
+        );
+      }
+
+      const existing = await tx.claim.findUnique({
+        where: { walletAddress: input.walletAddress },
+        select: { status: true },
+      });
+      if (existing?.status === ClaimStatus.SUCCESS) {
+        throw new ClaimError(
+          "ALREADY_CLAIMED",
+          "This wallet has already claimed."
+        );
+      }
+      if (
+        existing?.status === ClaimStatus.PENDING ||
+        existing?.status === ClaimStatus.SUBMITTED
+      ) {
+        throw new ClaimError(
+          "CONFLICT",
+          "A claim for this wallet is already in progress."
+        );
+      }
+
+      const ipTaken = await tx.claim.findFirst({
+        where: {
+          ipAddress: input.ipAddress,
+          status: ClaimStatus.SUCCESS,
+          walletAddress: { not: input.walletAddress },
+        },
+        select: { id: true },
+      });
+      if (ipTaken) {
+        throw new ClaimError(
+          "IP_BLOCKED",
+          "A successful claim was already made from this network."
+        );
+      }
+
+      const claim = await tx.claim.upsert({
+        where: { walletAddress: input.walletAddress },
+        create: {
+          walletAddress: input.walletAddress,
+          ipAddress: input.ipAddress,
+          fundedBy: input.fundedBy,
+          amount: CLAIM_AMOUNT,
+          status: ClaimStatus.PENDING,
+          idempotencyKey: input.idempotencyKey,
+        },
+        update: {
+          ipAddress: input.ipAddress,
+          fundedBy: input.fundedBy,
+          amount: CLAIM_AMOUNT,
+          status: ClaimStatus.PENDING,
+          idempotencyKey: input.idempotencyKey,
+          failReason: null,
+          txHash: null,
+          lastLedgerSeq: null,
+        },
+        select: { id: true },
+      });
+
+      return claim.id;
+    });
+  } catch (err) {
+    if (err instanceof ClaimError) throw err;
+    if (err instanceof Error && /Unique constraint/i.test(err.message)) {
+      throw new ClaimError(
+        "CONFLICT",
+        "Another claim is in progress. Please retry."
+      );
+    }
+    throw err;
+  }
+}
+
+async function payReservedClaim(
+  client: Client,
+  claimId: string,
+  walletAddress: string
+): Promise<ClaimResult> {
+  let signed;
+  try {
+    signed = await signClaimPayment(client, walletAddress);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await markFailed(claimId, reason);
+    if (/DISTRIBUTION_SEED/.test(reason)) {
+      throw new ClaimError(
+        "CONFIG",
+        "The distribution wallet is not configured."
+      );
+    }
+    throw new ClaimError("PAYMENT_FAILED", `Could not sign payment: ${reason}`);
+  }
+
+  // Record the hash before submitting so an interrupted run can be reconciled.
+  await prisma.claim.update({
+    where: { id: claimId },
+    data: {
+      status: ClaimStatus.SUBMITTED,
+      txHash: signed.hash,
+      lastLedgerSeq: signed.lastLedgerSequence,
+    },
+  });
+
+  let engineResult: string;
+  try {
+    ({ engineResult } = await submitSignedPayment(client, signed.txBlob));
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await markFailed(claimId, reason);
+    throw new ClaimError("PAYMENT_FAILED", `Payment failed: ${reason}`);
+  }
+
+  if (engineResult !== "tesSUCCESS") {
+    await markFailed(claimId, `Ledger rejected: ${engineResult}`);
+    throw new ClaimError(
+      "PAYMENT_FAILED",
+      `The ledger rejected the payment (${engineResult}).`
+    );
+  }
+
+  return finalizeSuccess(claimId, signed.hash, walletAddress, CLAIM_AMOUNT);
+}
+
+/** Mark success and count it exactly once, even if called twice. */
+async function finalizeSuccess(
+  claimId: string,
+  txHash: string,
+  walletAddress: string,
+  amount: string
+): Promise<ClaimResult> {
+  const successCount = await prisma.$transaction(async (tx) => {
+    const transitioned = await tx.claim.updateMany({
+      where: { id: claimId, status: { not: ClaimStatus.SUCCESS } },
+      data: {
+        status: ClaimStatus.SUCCESS,
+        txHash,
+        completedAt: new Date(),
+        failReason: null,
+      },
+    });
+
+    if (transitioned.count === 0) {
+      const counter = await tx.claimCounter.findUniqueOrThrow({
+        where: { id: 1 },
+        select: { successCount: true },
+      });
+      return counter.successCount;
+    }
+
+    const counter = await tx.claimCounter.update({
+      where: { id: 1 },
+      data: { successCount: { increment: 1 } },
+      select: { successCount: true },
+    });
+    return counter.successCount;
+  });
+
+  return {
+    ok: true,
+    txHash,
+    amount,
+    walletAddress,
+    successCount,
+    claimsRemaining: Math.max(0, CLAIM_CAP - successCount),
+  };
+}
+
+async function markFailed(claimId: string, reason: string): Promise<void> {
+  await prisma.claim.update({
+    where: { id: claimId },
+    data: { status: ClaimStatus.FAILED, failReason: reason.slice(0, 500) },
+  });
+}
+
+async function successResult(
+  walletAddress: string,
+  txHash: string,
+  amount: Claim["amount"]
+): Promise<ClaimResult> {
+  const { successCount } = await ensureCounter();
+  return {
+    ok: true,
+    txHash,
+    amount,
+    walletAddress,
+    successCount,
+    claimsRemaining: Math.max(0, CLAIM_CAP - successCount),
+  };
 }

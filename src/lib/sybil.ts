@@ -1,14 +1,18 @@
 import type { Client } from "xrpl";
 import { prisma } from "./db";
+import { normalizeTxEntry } from "./xrpl-tx";
 
-export type SybilResult =
-  | { blocked: false; fundedBy: string | null }
-  | { blocked: true; fundedBy: string | null; reason: string };
+const FUNDING_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
+
+export type SybilResult = {
+  blocked: boolean;
+  fundedBy: string | null;
+  reason?: string;
+};
 
 /**
- * Anti-sybil: resolve funding parent (first inbound Payment of XRP that
- * created/funded the account) and block if that parent — or a sibling
- * funded by the same parent — already claimed successfully.
+ * Resolve the wallet's funding parent and block the claim when that parent —
+ * or a sibling funded by the same parent — already claimed successfully.
  */
 export async function checkSybil(
   client: Client,
@@ -22,73 +26,65 @@ export async function checkSybil(
     update: { fundedBy, checkedAt: new Date() },
   });
 
-  if (!fundedBy) {
-    return { blocked: false, fundedBy: null };
-  }
+  if (!fundedBy) return { blocked: false, fundedBy: null };
 
-  // Parent already claimed?
-  const parentClaim = await prisma.claim.findFirst({
+  const parentClaimed = await prisma.claim.findFirst({
     where: { walletAddress: fundedBy, status: "SUCCESS" },
+    select: { id: true },
   });
-  if (parentClaim) {
+  if (parentClaimed) {
     return {
       blocked: true,
       fundedBy,
-      reason: "Funding parent wallet has already claimed.",
+      reason: "The wallet that funded this account has already claimed.",
     };
   }
 
-  // Sibling claimed? (another wallet with same fundedBy that succeeded)
-  const siblingClaim = await prisma.claim.findFirst({
-    where: {
-      fundedBy,
-      status: "SUCCESS",
-      walletAddress: { not: walletAddress },
-    },
-  });
-  if (siblingClaim) {
-    return {
-      blocked: true,
-      fundedBy,
-      reason: "A sibling wallet funded by the same parent has already claimed.",
-    };
-  }
-
-  // Also check walletFunding cache for siblings that claimed under different fundedBy field
-  const siblingWallets = await prisma.walletFunding.findMany({
+  // Siblings are recorded either on the claim itself or in the funding cache.
+  const siblings = await prisma.walletFunding.findMany({
     where: { fundedBy, walletAddress: { not: walletAddress } },
     select: { walletAddress: true },
   });
-  if (siblingWallets.length > 0) {
-    const siblingAddrs = siblingWallets.map((w) => w.walletAddress);
-    const claim = await prisma.claim.findFirst({
-      where: { walletAddress: { in: siblingAddrs }, status: "SUCCESS" },
-    });
-    if (claim) {
-      return {
-        blocked: true,
-        fundedBy,
-        reason: "A sibling wallet funded by the same parent has already claimed.",
-      };
-    }
+
+  const siblingClaimed = await prisma.claim.findFirst({
+    where: {
+      status: "SUCCESS",
+      walletAddress: { not: walletAddress },
+      OR: [
+        { fundedBy },
+        ...(siblings.length
+          ? [{ walletAddress: { in: siblings.map((s) => s.walletAddress) } }]
+          : []),
+      ],
+    },
+    select: { id: true },
+  });
+
+  if (siblingClaimed) {
+    return {
+      blocked: true,
+      fundedBy,
+      reason: "Another wallet funded by the same source has already claimed.",
+    };
   }
 
   return { blocked: false, fundedBy };
 }
 
+/** The account that sent the first inbound XRP payment to this wallet. */
 async function resolveFundedBy(
   client: Client,
   address: string
 ): Promise<string | null> {
   const cached = await prisma.walletFunding.findUnique({
     where: { walletAddress: address },
+    select: { fundedBy: true, checkedAt: true },
   });
-  if (cached && cached.fundedBy !== undefined && cached.fundedBy !== null) {
-    // Re-check if older than 7 days? Keep cache for Phase 1.
-    const age = Date.now() - cached.checkedAt.getTime();
-    if (age < 7 * 24 * 60 * 60 * 1000) {
-      return cached.fundedBy;
-    }
+  if (
+    cached?.fundedBy &&
+    Date.now() - cached.checkedAt.getTime() < FUNDING_CACHE_MS
+  ) {
+    return cached.fundedBy;
   }
 
   try {
@@ -102,34 +98,25 @@ async function resolveFundedBy(
       limit: 20,
     });
 
-    for (const item of res.result.transactions) {
-      const tx = item.tx as Record<string, unknown> | undefined;
+    let fallback: string | null = null;
+
+    for (const entry of res.result.transactions) {
+      const tx = normalizeTxEntry(entry);
       if (!tx) continue;
-      if (tx.TransactionType !== "Payment") continue;
-      if (tx.Destination !== address) continue;
-      // Prefer XRP-creating payments (Amount as string drops)
-      const amount = tx.Amount;
-      if (typeof amount === "string") {
-        const account = tx.Account;
-        if (typeof account === "string" && account !== address) {
-          return account;
-        }
-      }
+      const { fields } = tx;
+      if (fields.TransactionType !== "Payment") continue;
+      if (fields.Destination !== address) continue;
+
+      const sender = fields.Account;
+      if (typeof sender !== "string" || sender === address) continue;
+
+      // An XRP amount is a drops string; issued currencies are objects.
+      if (typeof fields.Amount === "string") return sender;
+      fallback ??= sender;
     }
 
-    // Fallback: first inbound payment of any kind
-    for (const item of res.result.transactions) {
-      const tx = item.tx as Record<string, unknown> | undefined;
-      if (!tx || tx.TransactionType !== "Payment") continue;
-      if (tx.Destination !== address) continue;
-      const account = tx.Account;
-      if (typeof account === "string" && account !== address) {
-        return account;
-      }
-    }
+    return fallback;
   } catch {
-    /* ignore — treat as unknown parent */
+    return null;
   }
-
-  return null;
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { evaluateEligibility } from "@/lib/eligibility";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
+import { isAddressLike } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
@@ -11,11 +12,14 @@ const bodySchema = z.object({
 
 export async function POST(req: Request) {
   const ip = clientIp(req);
-  const rl = rateLimit(`eligibility:${ip}`, 30, 60_000);
-  if (!rl.ok) {
+  const limit = rateLimit(`eligibility:${ip}`, 30, 60_000);
+  if (!limit.ok) {
     return NextResponse.json(
-      { error: "Rate limit exceeded", retryAfterMs: rl.retryAfterMs },
-      { status: 429 }
+      { error: "Too many checks. Please wait a moment." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(Math.ceil(limit.retryAfterMs / 1000)) },
+      }
     );
   }
 
@@ -23,21 +27,26 @@ export async function POST(req: Request) {
   try {
     json = await req.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
   const parsed = bodySchema.safeParse(json);
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid wallet address" }, { status: 400 });
+  if (!parsed.success || !isAddressLike(parsed.data.walletAddress)) {
+    return NextResponse.json(
+      { error: "That does not look like an XRPL address." },
+      { status: 400 }
+    );
   }
 
   try {
-    const result = await evaluateEligibility(parsed.data.walletAddress, ip);
-    return NextResponse.json(result);
-  } catch (err) {
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Eligibility check failed" },
-      { status: 500 }
+      await evaluateEligibility(parsed.data.walletAddress, ip)
+    );
+  } catch (err) {
+    console.error("[eligibility] check failed", err);
+    return NextResponse.json(
+      { error: "Could not reach the XRP Ledger. Please try again." },
+      { status: 502 }
     );
   }
 }

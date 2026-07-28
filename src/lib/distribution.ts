@@ -1,38 +1,37 @@
-import { Wallet, type Client } from "xrpl";
-import {
-  CLAIM_AMOUNT,
-  VRTY_CURRENCY_HEX,
-  VRTY_ISSUER,
-} from "./config";
+import { Wallet, type Client, type Payment, type TrustSet } from "xrpl";
+import { CLAIM_AMOUNT, VRTY_CURRENCY_HEX, VRTY_ISSUER } from "./config";
+
+let cachedWallet: Wallet | null = null;
 
 export function loadDistributionWallet(): Wallet {
+  if (cachedWallet) return cachedWallet;
+
   const seed = process.env.DISTRIBUTION_SEED?.trim();
-  if (seed) {
-    return Wallet.fromSeed(seed);
+  if (!seed) {
+    throw new Error("DISTRIBUTION_SEED is not configured");
   }
 
-  const secrets = process.env.DISTRIBUTION_SECRET_NUMBERS?.trim();
-  if (secrets) {
-    // Space-separated family seed numbers are uncommon; prefer classic seed.
-    throw new Error(
-      "DISTRIBUTION_SECRET_NUMBERS is not supported yet — set DISTRIBUTION_SEED."
-    );
-  }
-
-  throw new Error("DISTRIBUTION_SEED is not configured");
+  cachedWallet = Wallet.fromSeed(seed);
+  return cachedWallet;
 }
 
+export type SignedPayment = {
+  hash: string;
+  txBlob: string;
+  lastLedgerSequence: number | null;
+};
+
 /**
- * Submit Payment of CLAIM_AMOUNT VRTY from the distribution hot wallet.
- * Must only be called after DB reservation / lock succeeds.
+ * Sign the claim payment without submitting it. The hash is recorded before
+ * submission so a crash mid-flight can be reconciled instead of paying twice.
  */
-export async function sendClaimPayment(
+export async function signClaimPayment(
   client: Client,
   destination: string
-): Promise<{ hash: string; engineResult: string }> {
+): Promise<SignedPayment> {
   const wallet = loadDistributionWallet();
 
-  const prepared = await client.autofill({
+  const payment: Payment = {
     TransactionType: "Payment",
     Account: wallet.classicAddress,
     Destination: destination,
@@ -41,27 +40,53 @@ export async function sendClaimPayment(
       issuer: VRTY_ISSUER,
       value: CLAIM_AMOUNT,
     },
-  });
+  };
 
+  const prepared = await client.autofill(payment);
   const signed = wallet.sign(prepared);
-  const result = await client.submitAndWait(signed.tx_blob);
 
-  const meta = result.result.meta;
-  const engineResult =
-    typeof meta === "object" && meta && "TransactionResult" in meta
-      ? String((meta as { TransactionResult: string }).TransactionResult)
-      : "unknown";
-
-  if (engineResult !== "tesSUCCESS") {
-    throw new Error(`Payment failed on ledger: ${engineResult}`);
-  }
-
-  return { hash: signed.hash, engineResult };
+  return {
+    hash: signed.hash,
+    txBlob: signed.tx_blob,
+    lastLedgerSequence: prepared.LastLedgerSequence ?? null,
+  };
 }
 
-export function buildTrustSetTx(account: string) {
+export async function submitSignedPayment(
+  client: Client,
+  txBlob: string
+): Promise<{ engineResult: string }> {
+  const result = await client.submitAndWait(txBlob);
+  return { engineResult: engineResultOf(result.result.meta) };
+}
+
+/** Ledger state of a previously submitted transaction. */
+export async function lookupTransaction(
+  client: Client,
+  hash: string
+): Promise<{ validated: boolean; engineResult: string } | null> {
+  try {
+    const res = await client.request({ command: "tx", transaction: hash });
+    return {
+      validated: Boolean(res.result.validated),
+      engineResult: engineResultOf(res.result.meta),
+    };
+  } catch (err) {
+    if (/txnNotFound/i.test(String((err as Error)?.message ?? ""))) return null;
+    throw err;
+  }
+}
+
+function engineResultOf(meta: unknown): string {
+  if (meta && typeof meta === "object" && "TransactionResult" in meta) {
+    return String((meta as { TransactionResult: unknown }).TransactionResult);
+  }
+  return "unknown";
+}
+
+export function buildTrustSetTx(account: string): TrustSet {
   return {
-    TransactionType: "TrustSet" as const,
+    TransactionType: "TrustSet",
     Account: account,
     LimitAmount: {
       currency: VRTY_CURRENCY_HEX,
@@ -71,39 +96,23 @@ export function buildTrustSetTx(account: string) {
   };
 }
 
-export async function hasVrtyTrustLine(
+/** VRTY trust line state for a holder, in a single ledger request. */
+export async function getVrtyLine(
   client: Client,
   address: string
-): Promise<boolean> {
-  const lines = await client.request({
+): Promise<{ hasLine: boolean; balance: string }> {
+  const res = await client.request({
     command: "account_lines",
     account: address,
     peer: VRTY_ISSUER,
     ledger_index: "validated",
   });
 
-  return lines.result.lines.some(
-    (line) =>
-      line.account === VRTY_ISSUER &&
-      (line.currency === "VRTY" || line.currency === VRTY_CURRENCY_HEX)
-  );
-}
-
-export async function getVrtyBalance(
-  client: Client,
-  address: string
-): Promise<string> {
-  const lines = await client.request({
-    command: "account_lines",
-    account: address,
-    peer: VRTY_ISSUER,
-    ledger_index: "validated",
-  });
-
-  const line = lines.result.lines.find(
+  const line = res.result.lines.find(
     (l) =>
       l.account === VRTY_ISSUER &&
       (l.currency === "VRTY" || l.currency === VRTY_CURRENCY_HEX)
   );
-  return line?.balance ?? "0";
+
+  return { hasLine: Boolean(line), balance: line?.balance ?? "0" };
 }

@@ -39,6 +39,15 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+## Checks
+
+```bash
+npm test        # unit tests for the eligibility rules and ledger parsing
+npm run lint
+npm run typecheck
+npm run build
+```
+
 ## API
 
 | Method | Path | Purpose |
