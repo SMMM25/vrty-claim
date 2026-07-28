@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# next.js
+.next/
+out/
+build/
+
+# env
+.env
+.env*.local
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# prisma
+prisma/*.db
+prisma/*.db-journal
+
+# misc
+.DS_Store
+*.pem
+.vercel
+.idea/
+.vscode/
+*.log
+
+# cursor / editor (keep repo clean for xApp review)
+.cursor/
+AGENTS.md
