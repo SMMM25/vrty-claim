@@ -7,12 +7,45 @@
   "license": "MIT",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy",
+    "postinstall": "prisma generate"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@crossmarkio/sdk": "^0.4.0",
+    "@gemwallet/api": "^3.8.0",
+    "@prisma/client": "^5.22.0",
+    "@walletconnect/sign-client": "^2.23.10",
+    "lucide-react": "^1.27.0",
+    "next": "^15.5.22",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "xrpl": "^5.0.0",
+    "xumm-sdk": "^1.11.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.5.4",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.22",
+    "postcss": "^8.5.24",
+    "prisma": "^5.22.0",
+    "qrcode": "^1.5.4",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   }
 }

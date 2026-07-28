@@ -7,9 +7,9 @@ Standalone open-source claim app for **58.9 VRTY** per eligible XRPL wallet (fir
 
 ## Status
 
-🚧 **Phase 1 in development** — repository scaffold only. See [docs/PLAN.md](./docs/PLAN.md) for the approved specification.
+Phase 1 implemented — see [docs/PLAN.md](./docs/PLAN.md). Deploy notes: [docs/DEPLOY.md](./docs/DEPLOY.md).
 
-## Eligibility (summary)
+## Eligibility
 
 | Rule | Value |
 |------|-------|
@@ -20,28 +20,51 @@ Standalone open-source claim app for **58.9 VRTY** per eligible XRPL wallet (fir
 | Per IP | One successful claim |
 | Anti-sybil | Funding-parent / sibling detection, captcha, rate limits |
 
-## Stack (planned)
+## Stack
 
-- **Frontend:** Next.js, TypeScript, Tailwind (Verity visual design)
+- **Frontend:** Next.js 15, TypeScript, Tailwind (Verity visual design)
 - **Wallets:** Xaman (xApp), GemWallet, Crossmark, Bifrost / WalletConnect
-- **Backend:** Next.js API routes, PostgreSQL, XRPL.js
-- **Deploy:** `claim.verityprotocol.io` (target)
+- **Backend:** Next.js API routes, PostgreSQL (Prisma), XRPL.js
+- **Deploy target:** `claim.verityprotocol.io`
 
 ## Quick start
 
-Not yet — implementation starts after repo bootstrap. When ready:
-
 ```bash
 cp .env.example .env.local
+# fill DATABASE_URL, DISTRIBUTION_SEED, Xaman + Turnstile keys
 npm install
+npx prisma migrate deploy
 npm run dev
 ```
 
-## Related projects
+Open [http://localhost:3000](http://localhost:3000).
 
-- [Verity Protocol](https://github.com/SMMM25/Verity-Protocol-VRTY-) — main platform (separate codebase)
-- Wallet connect reference: [Aaditya-T/xrpl-wallet-connect](https://github.com/Aaditya-T/xrpl-wallet-connect) (patterns only; see [NOTICE](./NOTICE))
+## Checks
+
+```bash
+npm test        # unit tests for the eligibility rules and ledger parsing
+npm run lint
+npm run typecheck
+npm run build
+```
+
+## API
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/status` | Cap progress + config health |
+| POST | `/api/eligibility` | `{ walletAddress }` → eligibility report |
+| POST | `/api/claim` | Atomic claim + distribution Payment |
+| POST | `/api/trustset` | Unsigned TrustSet txjson |
+| POST | `/api/xumm/signin` | Xaman SignIn payload |
+| POST | `/api/xumm/trustset` | Xaman TrustSet payload |
+| GET | `/api/xumm/payload/:uuid` | Poll Xaman result |
 
 ## Security
 
-Do not commit `.env` files or distribution wallet seeds. The distribution hot wallet must be funded separately before launch.
+Do not commit `.env` files or distribution wallet seeds. The distribution hot wallet must be funded (~589k VRTY + XRP fees) before launch.
+
+## Related
+
+- [Verity Protocol](https://github.com/SMMM25/Verity-Protocol-VRTY-) — main platform (separate codebase)
+- Wallet connect reference: [Aaditya-T/xrpl-wallet-connect](https://github.com/Aaditya-T/xrpl-wallet-connect) (patterns only; see [NOTICE](./NOTICE))
