@@ -1,0 +1,8 @@
+Third-Party Notice
+
+Wallet connection patterns in this project were informed by the open work of
+Aaditya-T/xrpl-wallet-connect (https://github.com/Aaditya-T/xrpl-wallet-connect).
+That repository did not include a license file at the time of reference; no code
+was copied verbatim. Implementation here is original to this project.
+
+Visual design follows Verity Protocol brand guidelines (verityprotocol.io).
