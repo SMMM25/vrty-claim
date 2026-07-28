@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Successful and in-flight claims
+model Claim {
+  id              String      @id @default(cuid())
+  walletAddress   String      @unique
+  ipAddress       String
+  fundedBy        String?
+  amount          String      @default("58.9")
+  status          ClaimStatus @default(PENDING)
+  txHash          String?     @unique
+  failReason      String?
+  idempotencyKey  String      @unique
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  completedAt     DateTime?
+
+  @@index([ipAddress])
+  @@index([status])
+  @@index([fundedBy])
+  @@index([createdAt])
+}
+
+enum ClaimStatus {
+  PENDING
+  SUBMITTED
+  SUCCESS
+  FAILED
+}
+
+/// Global FCFS counter (single row, id = 1)
+model ClaimCounter {
+  id            Int      @id @default(1)
+  successCount  Int      @default(0)
+  updatedAt     DateTime @updatedAt
+}
+
+/// Optional cache of funding parent lookups
+model WalletFunding {
+  walletAddress String   @id
+  fundedBy      String?
+  checkedAt     DateTime @default(now())
+
+  @@index([fundedBy])
+}
