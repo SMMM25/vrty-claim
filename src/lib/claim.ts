@@ -322,7 +322,7 @@ async function payReservedClaim(
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
 
-    if (/DISTRIBUTION_SEED/.test(reason)) {
+    if (/DISTRIBUTION_(SEED|SECRET_NUMBERS|WALLET)/.test(reason)) {
       await markFailed(claimId, reason);
       throw new ClaimError(
         "CONFIG",
