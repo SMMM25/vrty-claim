@@ -5,6 +5,7 @@ import {
   CLAIM_CAP,
   MIN_XRP,
 } from "@/lib/config";
+import { isDistributionConfigured } from "@/lib/distribution";
 import { ensureCounter } from "@/lib/eligibility";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +26,7 @@ export async function GET() {
       successCount,
       claimsRemaining: Math.max(0, CLAIM_CAP - successCount),
       configured: {
-        distribution: Boolean(process.env.DISTRIBUTION_SEED?.trim()),
+        distribution: isDistributionConfigured(),
         xaman: Boolean(
           process.env.NEXT_PUBLIC_XUMM_API_KEY?.trim() &&
             process.env.XUMM_API_SECRET?.trim()

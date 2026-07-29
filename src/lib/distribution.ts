@@ -1,16 +1,44 @@
-import { Wallet, type Client, type Payment, type TrustSet } from "xrpl";
+import {
+  Wallet,
+  walletFromSecretNumbers,
+  type Client,
+  type Payment,
+  type TrustSet,
+} from "xrpl";
 import { CLAIM_AMOUNT, VRTY_CURRENCY_HEX, VRTY_ISSUER } from "./config";
 
 let cachedWallet: Wallet | null = null;
 
+export function isDistributionConfigured(): boolean {
+  return Boolean(
+    process.env.DISTRIBUTION_SECRET_NUMBERS?.trim() ||
+      process.env.DISTRIBUTION_SEED?.trim()
+  );
+}
+
 export function loadDistributionWallet(): Wallet {
   if (cachedWallet) return cachedWallet;
 
+  const secretNumbers = process.env.DISTRIBUTION_SECRET_NUMBERS?.trim();
   const seed = process.env.DISTRIBUTION_SEED?.trim();
-  if (!seed) throw new Error("DISTRIBUTION_SEED is not configured");
 
-  cachedWallet = Wallet.fromSeed(seed);
-  return cachedWallet;
+  if (secretNumbers && seed) {
+    throw new Error(
+      "Set either DISTRIBUTION_SECRET_NUMBERS or DISTRIBUTION_SEED, not both."
+    );
+  }
+
+  if (secretNumbers) {
+    cachedWallet = walletFromSecretNumbers(secretNumbers);
+    return cachedWallet;
+  }
+
+  if (seed) {
+    cachedWallet = Wallet.fromSeed(seed);
+    return cachedWallet;
+  }
+
+  throw new Error("DISTRIBUTION_WALLET is not configured");
 }
 
 /**
