@@ -1,13 +1,7 @@
 /** Public contact and legal URLs for the claim portal and xApp manifest. */
 
-/**
- * Public-facing identity only. Registered company name, street address, and
- * phone number are deliberately kept out of this repo and off the site — they
- * are shared directly with reviewers and regulators when required.
- */
+/** Brand name only on public pages — no personal or registered-company details. */
 export const PRODUCT_NAME = "Verity Protocol";
-export const OPERATOR_NAME = "Verity Protocol (Scott Medeiros)";
-export const OPERATOR_JURISDICTION = "Ontario, Canada";
 export const SUPPORT_EMAIL = "info@verityprotocol.io";
 
 export const SITE_ORIGIN =

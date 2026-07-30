@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   GITHUB_REPO,
   PRIVACY_PATH,
+  PRODUCT_NAME,
   SUPPORT_EMAIL,
   SUPPORT_PATH,
   TERMS_PATH,
@@ -30,7 +31,7 @@ export function SiteFooter() {
         </a>
       </nav>
       <p>
-        Built by Scott Medeiros ·{" "}
+        {PRODUCT_NAME} ·{" "}
         <a
           href={`mailto:${SUPPORT_EMAIL}`}
           className="transition hover:text-violet-300"
