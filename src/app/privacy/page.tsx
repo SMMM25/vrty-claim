@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import { LegalPage } from "@/components/LegalPage";
 import {
-  OPERATOR_JURISDICTION,
-  OPERATOR_NAME,
   PRIVACY_URL,
   PRODUCT_NAME,
   SUPPORT_EMAIL,
@@ -18,8 +16,8 @@ export default function PrivacyPage() {
   return (
     <LegalPage title="Privacy Policy">
       <p>
-        Last updated: July 30, 2026. {OPERATOR_NAME} describes below how we
-        handle information when you use the {PRODUCT_NAME} VRTY Claim portal.
+        Last updated: July 30, 2026. {PRODUCT_NAME} describes below how we
+        handle information when you use the VRTY Claim portal.
       </p>
 
       <h2>1. Information we collect</h2>
@@ -91,12 +89,7 @@ export default function PrivacyPage() {
 
       <h2>7. Contact</h2>
       <p>
-        {OPERATOR_NAME}, {OPERATOR_JURISDICTION}
-        <br />
         <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
-        <br />
-        Registered company details are available to regulators and platform
-        reviewers on request.
       </p>
     </LegalPage>
   );
