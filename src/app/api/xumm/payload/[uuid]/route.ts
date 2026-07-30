@@ -17,8 +17,26 @@ type CachedPayload = {
   expiresAt: number;
 };
 
-/** Resolved payloads are immutable — cache briefly to avoid repeat Xaman API calls. */
+/**
+ * Resolved payloads are terminal, so a short cache stops the browser's polling
+ * loop from re-hitting the Xaman API once a request is signed or rejected.
+ * Single-instance only, same as the rate limiter.
+ */
 const resolvedPayloadCache = new Map<string, CachedPayload>();
+const CACHE_TTL_MS = 10 * 60_000;
+const MAX_CACHED_PAYLOADS = 5_000;
+
+function pruneCache(now: number): void {
+  for (const [key, entry] of resolvedPayloadCache) {
+    if (entry.expiresAt <= now) resolvedPayloadCache.delete(key);
+  }
+  // Expiry alone cannot bound the map during a sustained burst.
+  while (resolvedPayloadCache.size > MAX_CACHED_PAYLOADS) {
+    const oldest = resolvedPayloadCache.keys().next();
+    if (oldest.done) break;
+    resolvedPayloadCache.delete(oldest.value);
+  }
+}
 
 /**
  * Poll a Xaman sign request. Only the fields the browser needs are returned —
@@ -42,9 +60,11 @@ export async function GET(
   }
 
   try {
+    const now = Date.now();
     const cached = resolvedPayloadCache.get(uuid);
-    if (cached && cached.expiresAt > Date.now()) {
-      return NextResponse.json(cached.body);
+    if (cached) {
+      if (cached.expiresAt > now) return NextResponse.json(cached.body);
+      resolvedPayloadCache.delete(uuid);
     }
 
     const payload = await requireXumm().payload.get(uuid);
@@ -69,10 +89,8 @@ export async function GET(
     };
 
     if (payload.meta.resolved) {
-      resolvedPayloadCache.set(uuid, {
-        body,
-        expiresAt: Date.now() + 10 * 60_000,
-      });
+      if (resolvedPayloadCache.size >= MAX_CACHED_PAYLOADS) pruneCache(now);
+      resolvedPayloadCache.set(uuid, { body, expiresAt: now + CACHE_TTL_MS });
     }
 
     return NextResponse.json(body);

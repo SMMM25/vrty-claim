@@ -14,6 +14,7 @@ import {
 export const metadata: Metadata = {
   title: "Support | VRTY Claim",
   description: "Get help with the VRTY Claim portal.",
+  alternates: { canonical: SUPPORT_URL },
 };
 
 export default function SupportPage() {
@@ -74,10 +75,6 @@ export default function SupportPage() {
       <p>
         We are not affiliated with XRPL Labs or Xaman wallet support. For
         wallet-specific issues, contact Xaman support directly.
-      </p>
-
-      <p>
-        Canonical URL: <a href={SUPPORT_URL}>{SUPPORT_URL}</a>
       </p>
     </LegalPage>
   );

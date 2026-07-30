@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { SiteFooter } from "@/components/SiteFooter";
 
@@ -6,7 +7,7 @@ export function LegalPage({
   children,
 }: {
   title: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <main className="relative min-h-screen overflow-hidden">
@@ -21,7 +22,8 @@ export function LegalPage({
         <h1 className="mt-6 font-[family-name:var(--font-display)] text-3xl font-bold text-white">
           {title}
         </h1>
-        <article className="prose prose-invert mt-8 max-w-none space-y-4 text-sm leading-relaxed text-slate-300 [&_a]:text-violet-300 [&_a]:underline [&_h2]:mt-8 [&_h2]:font-[family-name:var(--font-display)] [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:text-white [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5">
+        {/* Element selectors instead of `prose`: the typography plugin is not installed. */}
+        <article className="mt-8 space-y-4 text-sm leading-relaxed text-slate-300 [&_a]:text-violet-300 [&_a]:underline [&_h2]:mt-8 [&_h2]:font-[family-name:var(--font-display)] [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:text-white [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5">
           {children}
         </article>
         <SiteFooter />

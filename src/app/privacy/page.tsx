@@ -11,6 +11,7 @@ import {
 export const metadata: Metadata = {
   title: "Privacy Policy | VRTY Claim",
   description: "Privacy Policy for the VRTY Claim portal.",
+  alternates: { canonical: PRIVACY_URL },
 };
 
 export default function PrivacyPage() {
@@ -95,9 +96,6 @@ export default function PrivacyPage() {
         {COMPANY_ADDRESS}
         <br />
         <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
-      </p>
-      <p>
-        Canonical URL: <a href={PRIVACY_URL}>{PRIVACY_URL}</a>
       </p>
     </LegalPage>
   );
