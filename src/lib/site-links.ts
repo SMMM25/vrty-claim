@@ -1,11 +1,14 @@
 /** Public contact and legal URLs for the claim portal and xApp manifest. */
 
-export const COMPANY_NAME = "Verity Protocol";
+/**
+
+
+
+ */
 export const PRODUCT_NAME = "Verity Protocol";
+export const OPERATOR_NAME = "Verity Protocol";
+export const OPERATOR_JURISDICTION = "";
 export const SUPPORT_EMAIL = "info@verityprotocol.io";
-export const SUPPORT_PHONE = "";
-export const COMPANY_ADDRESS =
-  "";
 
 export const SITE_ORIGIN =
   process.env.NEXT_PUBLIC_SITE_ORIGIN?.trim() ||
