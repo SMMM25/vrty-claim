@@ -3,8 +3,6 @@ import { LegalPage } from "@/components/LegalPage";
 import {
   GITHUB_ISSUES,
   MAIN_SITE,
-  OPERATOR_JURISDICTION,
-  OPERATOR_NAME,
   PRODUCT_NAME,
   SUPPORT_EMAIL,
   SUPPORT_URL,
@@ -39,10 +37,8 @@ export default function SupportPage() {
         . Please do not post wallet secrets or secret numbers.
       </p>
 
-      <h2>Who operates this</h2>
+      <h2>More about Verity Protocol</h2>
       <p>
-        {OPERATOR_NAME}, {OPERATOR_JURISDICTION}
-        <br />
         <a href={MAIN_SITE}>{MAIN_SITE}</a>
       </p>
 
