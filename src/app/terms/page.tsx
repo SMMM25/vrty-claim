@@ -18,6 +18,7 @@ import {
 export const metadata: Metadata = {
   title: "Terms of Service | VRTY Claim",
   description: "Terms of Service for the VRTY Claim portal.",
+  alternates: { canonical: TERMS_URL },
 };
 
 export default function TermsPage() {
@@ -82,9 +83,6 @@ export default function TermsPage() {
         {COMPANY_ADDRESS}
         <br />
         <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
-      </p>
-      <p>
-        Canonical URL: <a href={TERMS_URL}>{TERMS_URL}</a>
       </p>
     </LegalPage>
   );

@@ -89,8 +89,9 @@ async function pollXamanPayload(uuid: string): Promise<string> {
     }
 
     polls += 1;
-    // Back off to reduce Xaman API payload polling (429) during sign-in.
-    const delayMs = Math.min(5000, 2000 + Math.floor(polls / 2) * 1000);
+    // Xaman rate limits payload lookups, so widen the gap the longer a request
+    // stays unsigned. Early polls stay short because most users sign quickly.
+    const delayMs = Math.min(5_000, 1_500 + polls * 500);
     await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
   throw new Error("Timed out waiting for Xaman");
