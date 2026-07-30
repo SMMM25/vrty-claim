@@ -1,13 +1,12 @@
 import type { Metadata } from "next";
 import { LegalPage } from "@/components/LegalPage";
 import {
-  COMPANY_ADDRESS,
-  COMPANY_NAME,
   GITHUB_ISSUES,
   MAIN_SITE,
+  OPERATOR_JURISDICTION,
+  OPERATOR_NAME,
   PRODUCT_NAME,
   SUPPORT_EMAIL,
-  SUPPORT_PHONE,
   SUPPORT_URL,
 } from "@/lib/site-links";
 
@@ -40,14 +39,9 @@ export default function SupportPage() {
         . Please do not post wallet secrets or secret numbers.
       </p>
 
-      <h2>Phone</h2>
-      <p>{SUPPORT_PHONE}</p>
-
-      <h2>Company</h2>
+      <h2>Who operates this</h2>
       <p>
-        {COMPANY_NAME}
-        <br />
-        {COMPANY_ADDRESS}
+        {OPERATOR_NAME}, {OPERATOR_JURISDICTION}
         <br />
         <a href={MAIN_SITE}>{MAIN_SITE}</a>
       </p>
