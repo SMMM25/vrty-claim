@@ -73,6 +73,8 @@ function saveSession(wallet: ConnectedWallet | null) {
 
 async function pollXamanPayload(uuid: string): Promise<string> {
   const deadline = Date.now() + 5 * 60_000;
+  let polls = 0;
+
   while (Date.now() < deadline) {
     const res = await fetch(`/api/xumm/payload/${uuid}`);
     if (!res.ok) throw new Error("Lost contact with Xaman");
@@ -86,7 +88,10 @@ async function pollXamanPayload(uuid: string): Promise<string> {
       throw new Error("Xaman signed without returning an account");
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    polls += 1;
+    // Back off to reduce Xaman API payload polling (429) during sign-in.
+    const delayMs = Math.min(5000, 2000 + Math.floor(polls / 2) * 1000);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
   throw new Error("Timed out waiting for Xaman");
 }

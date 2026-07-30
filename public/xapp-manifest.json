@@ -3,9 +3,9 @@
   "description": "Claim 58.9 VRTY for eligible XRPL wallets (Verity Protocol).",
   "icon": "/icon-512.svg",
   "homepage": "https://claim.verityprotocol.io",
-  "supporturl": "https://github.com/SMMM25/vrty-claim/issues",
-  "termsurl": "https://verityprotocol.io",
-  "privacyurl": "https://verityprotocol.io",
+  "supporturl": "https://claim.verityprotocol.io/support",
+  "termsurl": "https://claim.verityprotocol.io/terms",
+  "privacyurl": "https://claim.verityprotocol.io/privacy",
   "redirect_uris": ["https://claim.verityprotocol.io"],
   "abouturl": "https://github.com/SMMM25/vrty-claim"
 }

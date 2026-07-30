@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { WalletPicker } from "@/components/WalletPicker";
 import { ClaimPanel } from "@/components/ClaimPanel";
+import { SiteFooter } from "@/components/SiteFooter";
 
 type Status = {
   ok: boolean;
@@ -63,7 +64,7 @@ export default function HomePage() {
           </div>
           <a
             href="https://github.com/SMMM25/vrty-claim"
-            className="text-sm text-slate-400 hover:text-violet-300 transition"
+            className="hidden text-sm text-slate-400 hover:text-violet-300 transition sm:inline"
             target="_blank"
             rel="noreferrer"
           >
@@ -109,9 +110,7 @@ export default function HomePage() {
           </div>
         </section>
 
-        <footer className="mt-10 text-center text-xs text-slate-500">
-          Built by Verity Protocol · MIT · Not affiliated with Ripple
-        </footer>
+        <SiteFooter />
       </div>
     </main>
   );
