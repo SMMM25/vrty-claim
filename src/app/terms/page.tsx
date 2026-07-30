@@ -7,9 +7,9 @@ import {
   MIN_XRP,
 } from "@/lib/config";
 import {
-  COMPANY_ADDRESS,
-  COMPANY_NAME,
   MAIN_SITE,
+  OPERATOR_JURISDICTION,
+  OPERATOR_NAME,
   PRODUCT_NAME,
   SUPPORT_EMAIL,
   TERMS_URL,
@@ -27,8 +27,8 @@ export default function TermsPage() {
       <p>
         Last updated: July 30, 2026. These Terms of Service (&quot;Terms&quot;)
         govern your use of the VRTY Claim portal (the &quot;Service&quot;)
-        operated by {COMPANY_NAME} doing business as {PRODUCT_NAME} (&quot;we,&quot;
-        &quot;us&quot;).
+        operated by {OPERATOR_NAME} (&quot;we,&quot; &quot;us&quot;), a company
+        registered in {OPERATOR_JURISDICTION}.
       </p>
 
       <h2>1. The Service</h2>
@@ -76,13 +76,20 @@ export default function TermsPage() {
         INCIDENTAL, OR CONSEQUENTIAL DAMAGES ARISING FROM USE OF THE SERVICE.
       </p>
 
-      <h2>7. Contact</h2>
+      <h2>7. Governing law</h2>
       <p>
-        {COMPANY_NAME}
-        <br />
-        {COMPANY_ADDRESS}
+        These Terms are governed by the laws of {OPERATOR_JURISDICTION}, without
+        regard to conflict-of-law rules.
+      </p>
+
+      <h2>8. Contact</h2>
+      <p>
+        {OPERATOR_NAME}, {OPERATOR_JURISDICTION}
         <br />
         <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
+        <br />
+        Registered company details are available to regulators and platform
+        reviewers on request.
       </p>
     </LegalPage>
   );
